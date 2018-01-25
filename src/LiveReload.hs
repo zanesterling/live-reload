@@ -1,9 +1,11 @@
-module Control.LiveReload (runWithLiveReload) where
+module LiveReload (runWithLiveReload) where
 
 import Control.Concurrent.MVar
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent ( forkIO
+                          , threadDelay
+                          )
 import Control.Monad (when)
-import System.Directory (getModificationTime)
+import System.Directory
 
 
 -- TODO: Allow watching files or directories.
@@ -17,24 +19,31 @@ runWithLiveReload :: Read a =>
 runWithLiveReload boot loop reload configFile = do
   config <- read <$> readFile configFile
   st <- boot config
-  flag <- newEmptyMVar :: IO (MVar b)
-  loopTid <- forkIO $ loopWrapper flag st
+  flag <- newEmptyMVar
+
   modTime <- getModificationTime configFile
-  watchFile flag loopTid modTime
+  _ <- forkIO $ watchFile flag modTime
+  loopWrapper flag st
 
   where
     loopWrapper flag st = do
       st' <- loop st
       maybeNewConfig <- tryTakeMVar flag
       st'' <- maybe (return st') (reload st') maybeNewConfig
+      threadDelay 0 -- Allows watchFile to preempt.
       loopWrapper flag st''
 
-    -- TODO: Fail gracefully if the file is deleted.
-    watchFile flag loopTid modTime = do
-      modTime' <- getModificationTime configFile
-      when (modTime' > modTime) $
-        putMVar flag =<< getConfig configFile
-      threadDelay secondInMicroseconds
+    watchFile flag modTime = do
+      exists <- doesFileExist configFile
+      if not exists
+        then putStrLn $ "watched file \"" ++ configFile ++ "\" was deleted"
+        else
+        do
+          modTime' <- getModificationTime configFile
+          when (modTime' > modTime) $ do
+            putMVar flag =<< getConfig configFile
+          threadDelay secondInMicroseconds
+          watchFile flag modTime'
 
     secondInMicroseconds = 1000000
 
